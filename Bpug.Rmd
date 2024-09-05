@@ -1,0 +1,92 @@
+---
+title: "MB Stuff"
+output: html_document
+date: "2024-08-21"
+---
+
+Load in the Blackpug report and store it as "data."
+omit na values because the report included some additional random info at the bottom
+```{r}
+library("readxl")
+data <- read.csv("Class_Completion_Analysis_2024_08_07.csv")
+data <- na.omit(data)
+```
+
+
+To get the number of sessions for each merit badge, I downloaded an Excel file of the printable program schedule from the CHS master drive. I had to edit the Excel file a bit to get my code to catch everything (more on how that works later), but that's what this chunk is doing.
+```{r}
+sched <- read_xlsx("Master CHS 2024 MB Schedule (Including _Staff Hours View_) - Printable Program Schedule 4_15_2023.xlsx")
+sched <- subset(sched, select = -c(Lunch, ...7))
+
+names <- c("mb", "block1", "block2", "block3", "block4", "break1", "block5", "break2", "block6", "break6", "class.cap", "age.restriction", "money", "additional.comments")
+colnames(sched) <- names
+```
+
+
+This code calculates the total spots we have for each merit badge across the summer. Ultimately, the formula is (# of sessions) * (number of spots per session) * (number of weeks)
+```{r}
+# This chunk counts how many times the word session appears in the blocks. 
+sched$session_count <- apply(sched[, c("block1", "block2", "block3", "block4", "block5", "block6")], 1, function(row) {
+  sum(grepl("session", row, ignore.case = TRUE))
+})
+# Gets class cap
+sched$class.cap <- as.numeric(sched$class.cap)  
+sched$class.cap[is.na(sched$class.cap)] <- 0
+
+# multiplies session count by number of spots per session
+sched$potential <- sched$session_count * sched$class.cap
+# multiplies that number by the number of weeks.
+sched$potential <- sched$potential * 6
+```
+The warning message is because the drop in merit badges don't have class caps or sessions, so they produce NAs.
+
+Below is where we start to put it all together. The code adds session counts and potential number of attendees to the original data, the list of merit badges.
+```{r}
+# Matches indices for name of class in original data, and in  mb in schedule data. Basically matches up where a merit badge is in one dataframe to the other. 
+matching_indices <- match(data$Class.Name, sched$mb)
+data_filtered <- data[!is.na(matching_indices), ]
+
+# Adds a session count column to data, using the indices to put each mb in the right row. 
+data_filtered$session_count <- sched$session_count[matching_indices[!is.na(matching_indices)]]
+
+
+# Add the corresponding `potential` values from `sched` to `data_filtered`
+data_filtered$potential <- sched$potential[matching_indices[!is.na(matching_indices)]]
+```
+
+This adds a column that shows the difference between how many spots we have available in a badge and how many Scouts we had actually taking the badge. In theory, the closer to 0 this number is, the better. Also important to note that the drop ins have 0 potential seats, so their diff is going to just be 0 - participant count. 
+```{r}
+data_filtered$diff <- data_filtered$potential - data_filtered$Participant.Count
+
+```
+
+
+The code below finds the top ten most attended merit badges for the entire summer. Of note, there is an obvious association between number of sessions we offer and number of people earning the merit badges (i.e, we offer like 5 sessions of Metalwork), which this report doesn't capture. It might be worth dividing the total attendees by number of MB sessions to compare average attendees week by week.
+```{r}
+# I wanted to drop classes.complete and classes.incomplete as they just clutter the output and don't say too much that's interesting
+data2 <- subset(data_filtered, select = -c(Classes.Complete, Classes.Incomplet))
+largest_values <- data2[order(-data$Participant.Count), ][1:10,]
+print(largest_values)
+```
+This code does the same thing, but for the ten least attended MBs.
+```{r}
+smallest_values <- data2[order(data$Participant.Count), ][1:10,]
+print(smallest_values)
+```
+This chunk does random summary statistics. 
+```{r}
+cat("The average completion rate of a merit badge is", mean(data$Percent.Complete), "The average attendance of a merit badge is", mean(data$Participant.Count), "The median attendance of a merit badge is", median(data$Participant.Count))
+
+```
+Here's a histogram of participant counts in merit badges
+```{r}
+hist(data$Participant.Count)
+
+```
+And lastly, the amount of completes we handed out at camp this year!
+```{r}
+cat("the number of merit badges awarded at camp this year was",sum(data$Classes.Complete))
+```
+
+
+
